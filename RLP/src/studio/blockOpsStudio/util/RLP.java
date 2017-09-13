@@ -74,6 +74,80 @@ public class RLP {
 			}
 		}
 	}
+	
+		/*
+	 * *****************************************************
+	 * ****************** DECODING *************************
+	 * *****************************************************
+	 */
+	
+	 /**
+     * Reads any RLP encoded byte-array and returns all objects as byte-array or list of byte-arrays
+     *
+     * @param data RLP encoded byte-array
+     * @param pos  position in the array to start reading
+     * @return DecodeResult encapsulates the decoded items as a single Object and the final read position
+     */
+    public static DecodeResult decode(byte[] data, int pos) {
+        if (data == null || data.length < 1) {
+            return null;
+        }
+        int prefix = data[pos] & 0xFF;
+        if (prefix == OFFSET_SHORT_ITEM) {  // 0x80
+            return new DecodeResult(pos + 1, ""); // means no length or 0
+        } else if (prefix < OFFSET_SHORT_ITEM) {  // [0x00, 0x7f]
+            return new DecodeResult(pos + 1, new byte[]{data[pos]}); // byte is its own RLP encoding
+        } else if (prefix <= OFFSET_LONG_ITEM) {  // [0x81, 0xb7]
+            int len = prefix - OFFSET_SHORT_ITEM; // length of the encoded bytes
+            return new DecodeResult(pos + 1 + len, copyOfRange(data, pos + 1, pos + 1 + len));
+        } else if (prefix < OFFSET_SHORT_LIST) {  // [0xb8, 0xbf]
+            int lenlen = prefix - OFFSET_LONG_ITEM; // length of length the encoded bytes
+            int lenbytes = byteArrayToInt(copyOfRange(data, pos + 1, pos + 1 + lenlen)); // length of encoded bytes
+            return new DecodeResult(pos + 1 + lenlen + lenbytes, copyOfRange(data, pos + 1 + lenlen, pos + 1 + lenlen
+                    + lenbytes));
+        } else if (prefix <= OFFSET_LONG_LIST) {  // [0xc0, 0xf7]
+            int len = prefix - OFFSET_SHORT_LIST; // length of the encoded list
+            int prevPos = pos;
+            pos++;
+            return decodeList(data, pos, prevPos, len);
+        } else if (prefix <= 0xFF) {  // [0xf8, 0xff]
+            int lenlen = prefix - OFFSET_LONG_LIST; // length of length the encoded list
+            int lenlist = byteArrayToInt(copyOfRange(data, pos + 1, pos + 1 + lenlen)); // length of encoded bytes
+            pos = pos + lenlen + 1; // start at position of first element in list
+            int prevPos = lenlist;
+            return decodeList(data, pos, prevPos, lenlist);
+        } else {
+            throw new RuntimeException("Only byte values between 0x00 and 0xFF are supported, but got: " + prefix);
+        }
+    }
+    
+    private static DecodeResult decodeList(byte[] data, int pos, int prevPos, int len) {
+        List<Object> slice = new ArrayList<Object>();
+        for (int i = 0; i < len; ) {
+            // Get the next item in the data list and append it
+            DecodeResult result = decode(data, pos);
+            slice.add(result.getDecoded());
+            // Increment pos by the amount bytes in the previous read
+            prevPos = result.getPos();
+            i += (prevPos - pos);
+            pos = prevPos;
+        }
+        return new DecodeResult(pos, slice.toArray());
+    }
+    
+    /**
+     * Cast hex encoded value from byte[] to int
+     *
+     * Limited to Integer.MAX_VALUE: 2^32-1 (4 bytes)
+     *
+     * @param b array contains the values
+     * @return unsigned positive int value.
+     */
+    public static int byteArrayToInt(byte[] b) {
+        if (b == null || b.length == 0)
+            return 0;
+        return new BigInteger(1, b).intValue();
+    }
 
 	/**
 	 * Integer limitation goes up to 2^31-1 so length can never be bigger than
